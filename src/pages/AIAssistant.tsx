@@ -10,6 +10,7 @@ import { useAccount } from '@/contexts/AccountContext';
 import type { Trade } from '@/lib/types';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
+import { supabase } from '@/integrations/supabase/client';
 
 type Mode = 'coach' | 'analysis' | 'sentiment';
 type Msg = { role: 'user' | 'assistant'; content: string };
@@ -103,18 +104,27 @@ ${trades.slice(0, 15).map(t => `  ${t.date} ${t.time} | ${t.instrument} ${t.dire
 async function streamChat({ messages, mode, onDelta, onDone }: {
   messages: Msg[]; mode: Mode; onDelta: (t: string) => void; onDone: () => void;
 }) {
+  const { data } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
+  if (!accessToken) throw new Error('Not authenticated');
+
   const resp = await fetch(CHAT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      ...(anonKey ? { apikey: anonKey } : {}),
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ messages, mode }),
   });
 
   if (resp.status === 429) { toast.error('Rate limit exceeded. Please wait and try again.'); onDone(); return; }
   if (resp.status === 402) { toast.error('AI credits exhausted. Add funds in workspace settings.'); onDone(); return; }
-  if (!resp.ok || !resp.body) throw new Error('Failed to start stream');
+  if (!resp.ok || !resp.body) {
+    const t = await resp.text().catch(() => '');
+    throw new Error(t || `Failed to start stream (${resp.status})`);
+  }
 
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();

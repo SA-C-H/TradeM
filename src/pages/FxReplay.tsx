@@ -35,9 +35,6 @@ export default function FxReplay() {
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-foreground sm:text-xl">FX Replay</h1>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            Intégration par iframe (si FX Replay l’autorise).
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" className="gap-2" onClick={toggleFullscreen}>
@@ -52,22 +49,7 @@ export default function FxReplay() {
         </div>
       </div>
 
-      {!loaded && (
-        <Card className="bg-card border-border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <ShieldAlert className="h-4 w-4 text-muted-foreground" />
-              Si tu vois un écran vide
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-2">
-            <div>
-              FX Replay peut bloquer l’affichage dans un iframe (sécurité). Dans ce cas, utilise le bouton{' '}
-              <span className="text-foreground font-medium">Ouvrir</span>.
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Intentionally no helper text when iframe is blocked */}
 
       <div ref={frameWrapRef} className="rounded-md border border-border overflow-hidden bg-background/30">
         <iframe

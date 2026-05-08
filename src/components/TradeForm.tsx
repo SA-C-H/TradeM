@@ -16,11 +16,21 @@ import { usePlaybooks } from '@/hooks/use-playbooks';
 import PhotoUploader, { PendingPhoto } from '@/components/PhotoUploader';
 import { uploadTradePhoto, getSignedPhotoUrl, deletePhotoFromStorage } from '@/lib/photo-utils';
 import { X } from 'lucide-react';
+import { computePositionPnlUsd, computePositionRiskUsd } from '@/lib/trade-math';
 
 const emotions: EmotionalState[] = ['calm', 'confident', 'anxious', 'fearful', 'greedy', 'frustrated', 'neutral'];
 
 interface ExistingPhoto { id: string; storage_path: string; kind: string; signedUrl?: string }
 interface Props { tradeId?: string }
+
+type PositionRow = {
+  id?: string;
+  entry_price: string;
+  exit_price: string;
+  lot: string;
+  stop_loss: string;
+  fees: string;
+};
 
 export default function TradeForm({ tradeId }: Props) {
   const navigate = useNavigate();
@@ -35,6 +45,10 @@ export default function TradeForm({ tradeId }: Props) {
     result: '', risk_percent: '', risk_amount: '', reason: '',
     emotion_before: '', emotion_during: '', emotion_after: '',
   });
+  const [quoteToUsd, setQuoteToUsd] = useState(''); // for crosses like EURJPY (quote->USD)
+  const [positions, setPositions] = useState<PositionRow[]>([
+    { entry_price: '', exit_price: '', lot: '', stop_loss: '', fees: '' },
+  ]);
   const [playbookId, setPlaybookId] = useState<string>('');
   const [playbookChecks, setPlaybookChecks] = useState<Record<string, boolean>>({});
   const [pendingPhotos, setPendingPhotos] = useState<PendingPhoto[]>([]);
@@ -84,6 +98,17 @@ export default function TradeForm({ tradeId }: Props) {
         checks.forEach(c => { map[c.conditionId] = c.respected; });
         setPlaybookChecks(map);
       }
+      const { data: pos } = await supabase.from('trade_positions').select('*').eq('trade_id', tradeId).order('created_at', { ascending: true });
+      if (pos && pos.length > 0) {
+        setPositions(pos.map(p => ({
+          id: p.id,
+          entry_price: p.entry_price?.toString?.() ?? '',
+          exit_price: p.exit_price?.toString?.() ?? '',
+          lot: p.lot?.toString?.() ?? '',
+          stop_loss: p.stop_loss?.toString?.() ?? '',
+          fees: p.fees?.toString?.() ?? '',
+        })));
+      }
       const { data: photos } = await supabase.from('trade_photos').select('*').eq('trade_id', tradeId);
       if (photos) {
         const withUrls = await Promise.all(photos.map(async p => ({
@@ -112,8 +137,55 @@ export default function TradeForm({ tradeId }: Props) {
     return Math.round(((balance * riskPercent) / 100) * 100) / 100;
   }, [form.risk_amount, form.risk_percent, currentAccount?.initial_balance]);
 
+  const computedPositionsRisk = useMemo(() => {
+    const q = numOrNull(quoteToUsd);
+    const dir = (form.direction || 'long') as any;
+    const tradeStop = numOrNull(form.stop_loss);
+    let total = 0;
+    for (const p of positions) {
+      const entry = numOrNull(p.entry_price);
+      const lot = numOrNull(p.lot);
+      const stop = numOrNull(p.stop_loss) ?? tradeStop;
+      const r = computePositionRiskUsd({
+        instrument: form.instrument,
+        direction: dir,
+        entry,
+        stop,
+        lot,
+        quoteToUsd: q,
+      });
+      if (r != null) total += r;
+    }
+    return Math.round(total * 100) / 100;
+  }, [positions, form.instrument, form.direction, form.stop_loss, quoteToUsd]);
+
+  const computedPositionsPnl = useMemo(() => {
+    const q = numOrNull(quoteToUsd);
+    const dir = (form.direction || 'long') as any;
+    let total = 0;
+    let hasAny = false;
+    for (const p of positions) {
+      const entry = numOrNull(p.entry_price);
+      const exit = numOrNull(p.exit_price);
+      const lot = numOrNull(p.lot);
+      const fees = numOrNull(p.fees) ?? 0;
+      const pnl = computePositionPnlUsd({
+        instrument: form.instrument,
+        direction: dir,
+        entry,
+        exit,
+        lot,
+        fees,
+        quoteToUsd: q,
+      });
+      if (pnl != null) { total += pnl; hasAny = true; }
+    }
+    if (!hasAny) return null;
+    return Math.round(total * 100) / 100;
+  }, [positions, form.instrument, form.direction, quoteToUsd]);
+
   const computedRR = useMemo(() => {
-    const result = numOrNull(form.result);
+    const result = computedPositionsPnl ?? numOrNull(form.result);
     if (result != null && computedRiskAmount != null && computedRiskAmount !== 0) {
       return Math.round((result / computedRiskAmount) * 100) / 100;
     }
@@ -146,6 +218,10 @@ export default function TradeForm({ tradeId }: Props) {
     if (!accountId) { toast.error('Aucun compte sélectionné'); return; }
     if (!form.instrument || !form.trade_date) { toast.error('Instrument et date requis'); return; }
     if (!playbookId) { toast.error('Sélectionne un playbook'); return; }
+    if (computedRiskAmount != null && computedPositionsRisk > computedRiskAmount + 0.01) {
+      toast.error(`Risque total des positions (${computedPositionsRisk}$) > risque prévu (${computedRiskAmount}$). Réduis les lots.`);
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = {
@@ -160,7 +236,7 @@ export default function TradeForm({ tradeId }: Props) {
         entry_price: numOrNull(form.entry_price),
         stop_loss: numOrNull(form.stop_loss),
         take_profit: numOrNull(form.take_profit),
-        result: numOrNull(form.result) ?? 0,
+        result: computedPositionsPnl ?? (numOrNull(form.result) ?? 0),
         risk_percent: numOrNull(form.risk_percent),
         risk_amount: numOrNull(form.risk_amount),
         strategy: selectedPlaybook?.name ?? null,
@@ -180,6 +256,27 @@ export default function TradeForm({ tradeId }: Props) {
         const { data, error } = await supabase.from('trades').insert(payload).select('id').single();
         if (error) throw error;
         savedId = data.id;
+      }
+
+      // Positions: replace all for this trade
+      if (savedId) {
+        await supabase.from('trade_positions').delete().eq('trade_id', savedId);
+        const rows = positions
+          .map(p => ({
+            user_id: user.id,
+            account_id: accountId,
+            trade_id: savedId!,
+            entry_price: numOrNull(p.entry_price),
+            exit_price: numOrNull(p.exit_price),
+            lot: numOrNull(p.lot),
+            stop_loss: numOrNull(p.stop_loss),
+            fees: numOrNull(p.fees) ?? 0,
+          }))
+          .filter(r => r.entry_price != null && r.lot != null) as Array<any>;
+        if (rows.length > 0) {
+          const { error } = await supabase.from('trade_positions').insert(rows);
+          if (error) throw error;
+        }
       }
 
       for (const p of pendingPhotos) {
@@ -293,6 +390,73 @@ export default function TradeForm({ tradeId }: Props) {
                 className="bg-secondary/30 border-border font-mono"
               />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Risque positions (auto)</Label>
+              <Input
+                value={String(computedPositionsRisk)}
+                readOnly
+                className="bg-secondary/30 border-border font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Résultat positions (auto)</Label>
+              <Input
+                value={computedPositionsPnl == null ? '' : String(computedPositionsPnl)}
+                readOnly
+                placeholder="—"
+                className="bg-secondary/30 border-border font-mono"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-border">
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Positions (lots) — un seul setup</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              {positions.map((p, idx) => (
+                <div key={p.id ?? idx} className="md:col-span-5 grid grid-cols-1 md:grid-cols-5 gap-3 rounded-md border border-border p-3 bg-secondary/30">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Entry</Label>
+                    <Input type="number" step="any" value={p.entry_price} className="bg-secondary border-border font-mono"
+                      onChange={e => setPositions(prev => prev.map((r, i) => i === idx ? { ...r, entry_price: e.target.value } : r))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Exit</Label>
+                    <Input type="number" step="any" value={p.exit_price} className="bg-secondary border-border font-mono"
+                      onChange={e => setPositions(prev => prev.map((r, i) => i === idx ? { ...r, exit_price: e.target.value } : r))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Lot</Label>
+                    <Input type="number" step="any" value={p.lot} className="bg-secondary border-border font-mono"
+                      onChange={e => setPositions(prev => prev.map((r, i) => i === idx ? { ...r, lot: e.target.value } : r))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Stop (optionnel)</Label>
+                    <Input type="number" step="any" value={p.stop_loss} placeholder="Sinon stop du trade" className="bg-secondary border-border font-mono"
+                      onChange={e => setPositions(prev => prev.map((r, i) => i === idx ? { ...r, stop_loss: e.target.value } : r))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Frais ($)</Label>
+                    <div className="flex gap-2">
+                      <Input type="number" step="any" value={p.fees} className="bg-secondary border-border font-mono flex-1"
+                        onChange={e => setPositions(prev => prev.map((r, i) => i === idx ? { ...r, fees: e.target.value } : r))} />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => setPositions(prev => prev.length === 1 ? prev : prev.filter((_, i) => i !== idx))}
+                      >
+                        Suppr
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="outline" onClick={() => setPositions(prev => [...prev, { entry_price: '', exit_price: '', lot: '', stop_loss: '', fees: '' }])}>
+              Ajouter une position
+            </Button>
           </CardContent>
         </Card>
 

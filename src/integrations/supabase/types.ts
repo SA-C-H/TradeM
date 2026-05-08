@@ -199,6 +199,53 @@ export type Database = {
         }
         Relationships: []
       }
+      trade_positions: {
+        Row: {
+          account_id: string | null
+          created_at: string
+          entry_price: number
+          exit_price: number | null
+          fees: number
+          id: string
+          lot: number
+          stop_loss: number | null
+          trade_id: string
+          user_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string
+          entry_price: number
+          exit_price?: number | null
+          fees?: number
+          id?: string
+          lot: number
+          stop_loss?: number | null
+          trade_id: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string
+          entry_price?: number
+          exit_price?: number | null
+          fees?: number
+          id?: string
+          lot?: number
+          stop_loss?: number | null
+          trade_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trade_positions_trade_id_fkey"
+            columns: ["trade_id"]
+            isOneToOne: false
+            referencedRelation: "trades"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trading_accounts: {
         Row: {
           created_at: string

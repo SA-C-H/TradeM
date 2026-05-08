@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { usePlaybooks, useUpsertPlaybook, useDeletePlaybook, type PlaybookCondition, type Playbook } from '@/hooks/use-playbooks';
-import { SBR_PLAYBOOK } from '@/lib/sbr-system';
-import { Plus, Trash2, BookOpen, Pencil, X, ArrowRight, Sparkles } from 'lucide-react';
+import { Plus, Trash2, BookOpen, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface EditorState {
@@ -26,25 +25,6 @@ export default function Playbook() {
   const [editor, setEditor] = useState<EditorState>(empty);
   const [condLabel, setCondLabel] = useState('');
   const [condDesc, setCondDesc] = useState('');
-
-  const sbrExists = useMemo(
-    () => playbooks.some((p) => p.name === SBR_PLAYBOOK.name),
-    [playbooks],
-  );
-
-  const importSbr = async () => {
-    if (sbrExists) return;
-    await upsert.mutateAsync({
-      name: SBR_PLAYBOOK.name,
-      description: SBR_PLAYBOOK.description,
-      conditions: SBR_PLAYBOOK.conditions.map((c, i) => ({
-        id: `sbr-${i}`,
-        label: c.label,
-        description: c.description,
-      })),
-    });
-    toast.success('SBR playbook ajouté');
-  };
 
   const openCreate = () => { setEditor(empty); setOpen(true); };
   const openEdit = (pb: Playbook) => {
@@ -88,49 +68,6 @@ export default function Playbook() {
       <p className="text-sm text-muted-foreground">
         Crée un playbook par stratégie. Chaque trade sera lié à un playbook et validé contre ses conditions.
       </p>
-
-      <Card className="bg-card border-border overflow-hidden">
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                Importer le playbook SBR
-              </CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                Basé sur le système SBR déjà défini dans l’app (Sweep → Break → Retest).
-              </p>
-            </div>
-            <Button
-              onClick={importSbr}
-              disabled={upsert.isPending || sbrExists}
-              size="sm"
-              className="gap-1.5"
-            >
-              {sbrExists ? 'Déjà importé' : 'Importer'}
-              {!sbrExists && <ArrowRight className="h-4 w-4" />}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-xs text-muted-foreground">{SBR_PLAYBOOK.description}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {SBR_PLAYBOOK.conditions.slice(0, 6).map((c) => (
-              <div key={c.label} className="rounded-md border border-border bg-secondary/30 p-3">
-                <div className="text-[11px] font-medium text-foreground">{c.label}</div>
-                {c.description && (
-                  <div className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                    {c.description}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            Le playbook importé inclut {SBR_PLAYBOOK.conditions.length} conditions au total.
-          </div>
-        </CardContent>
-      </Card>
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground">Chargement...</div>
